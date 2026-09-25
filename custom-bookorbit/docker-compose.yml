@@ -1,0 +1,38 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: custom-bookorbit_web_1
+      APP_PORT: 3000
+
+  web:
+    image: ghcr.io/bookorbit/bookorbit:latest
+    restart: on-failure
+    stop_grace_period: 1m
+    depends_on:
+      - postgres
+    environment:
+      APP_URL: "http://${DEVICE_DOMAIN_NAME}:${APP_PORT}"
+      POSTGRES_USER: "bookorbit"
+      POSTGRES_PASSWORD: "$APP_PASSWORD"
+      POSTGRES_DB: "bookorbit"
+      POSTGRES_HOST: "custom-bookorbit_postgres_1"
+      POSTGRES_PORT: "5432"
+      JWT_SECRET: "$APP_SEED"
+      SETUP_BOOTSTRAP_TOKEN: "$APP_SEED"
+      PUID: "1000"
+      PGID: "1000"
+    volumes:
+      - ${APP_DATA_DIR}/data/books:/books
+      - ${APP_DATA_DIR}/data/app:/data
+
+  postgres:
+    image: pgvector/pgvector:pg18
+    restart: on-failure
+    environment:
+      POSTGRES_USER: "bookorbit"
+      POSTGRES_PASSWORD: "$APP_PASSWORD"
+      POSTGRES_DB: "bookorbit"
+    volumes:
+      - ${APP_DATA_DIR}/data/postgres:/var/lib/postgresql/data
