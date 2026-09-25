@@ -1,93 +1,113 @@
-# BookOrbit for Umbrel
+# BookOrbit for Umbrel (v2)
 
-This is a small "Community App Store" containing one app — BookOrbit — packaged
-to run on Umbrel Home the same way apps from the official App Store do (its
-own dashboard tile, `https://umbrel.local` access via the app proxy, and data
-kept under Umbrel's normal app-data directory). BookOrbit isn't in the
-official Umbrel App Store yet, so this is the standard way to add an app
-Umbrel doesn't ship: https://github.com/getumbrel/umbrel-community-app-store
+This version is built directly from BookOrbit's real `docker-compose.yml` and
+`.env.example` (fetched straight from the repo), adapted for Umbrel's app
+model. Two things went wrong before, both worth knowing about:
 
-## What's inside
+- My first package guessed at the image and env vars without the real
+  compose file in hand, so some values didn't match what the app actually
+  expects.
+- BookOrbit's **official** compose file is written for a plain Docker host,
+  not Umbrel, so running it as-is breaks in three specific ways:
+  1. It publishes a host port directly (`ports: "3000:3000"`) — Umbrel
+     expects `app_proxy` to own port exposure, not the app container.
+  2. It loads secrets from a `.env` file via `env_file: - .env` — Umbrel
+     doesn't create that file for you, so `POSTGRES_PASSWORD`, `JWT_SECRET`,
+     etc. (all marked `?required`) are simply missing and the container
+     exits.
+  3. It bind-mounts relative host paths (`./books`, `./data/app`,
+     `./data/postgres`) — under Umbrel these don't resolve to your app's
+     actual data directory, so the app and Postgres can end up reading and
+     writing in the wrong (or an inaccessible) place.
 
+This package fixes all three: `app_proxy` handles the port, every secret is
+set directly in `docker-compose.yml` using Umbrel's per-app secrets
+(`$APP_SEED`, `$APP_PASSWORD`), and volumes are anchored under
+`${APP_DATA_DIR}`. Everything else — the health check, read-only root
+filesystem, dropped capabilities — is carried over unchanged from the real
+compose file.
+
+## Before you reinstall
+
+Uninstall the old broken install first and clear out its data directory, so
+Postgres doesn't try to start against a half-initialized database from the
+earlier attempt:
+
+```bash
+sudo ~/umbrel/scripts/app uninstall custom-bookorbit
+sudo rm -rf ~/umbrel/app-data/custom-bookorbit
 ```
-umbrel-app-store.yml          <- declares this as a community app store
-custom-bookorbit/
-  umbrel-app.yml               <- app manifest (name, version, description)
-  docker-compose.yml           <- BookOrbit + bundled Postgres/pgvector
-```
 
-The compose file mirrors BookOrbit's official install (from
-https://bookorbit.app/installation): a `web` container plus a `postgres`
-container using `pgvector/pgvector:pg18`, with `/books` and app data mounted
-under Umbrel's per-app data directory.
+(Skip this if you never got as far as installing it, or if you don't mind
+losing whatever data the earlier attempt wrote.)
 
-## 1. Publish it somewhere Umbrel can reach
+## Publish and install
 
-Umbrel adds community stores by git URL, so push this folder to a repo (a
-private GitHub repo works fine — Umbrel only needs to `git clone` it):
+Same as before — if you already have the repo from last time, just replace
+`custom-bookorbit/docker-compose.yml` with the new one and push:
 
 ```bash
 cd bookorbit-umbrel-app-store
-git init
 git add .
-git commit -m "BookOrbit app for Umbrel"
-git remote add origin https://github.com/<your-username>/umbrel-bookorbit-store.git
-git push -u origin main
+git commit -m "Fix docker-compose.yml for Umbrel"
+git push
 ```
 
-## 2. Add the store to Umbrel
-
-**From the dashboard:** open the App Store → the "⋯" menu → **Add a Community
-App Store** → paste your repo URL.
-
-**Or via SSH**, if you'd rather use the CLI:
+Then on Umbrel:
 
 ```bash
-sudo ~/umbrel/scripts/repo add https://github.com/<your-username>/umbrel-bookorbit-store.git
 sudo ~/umbrel/scripts/repo update
-```
-
-## 3. Install BookOrbit
-
-It'll show up under "My Custom App Store" in the dashboard — click Install.
-Or from SSH:
-
-```bash
 sudo ~/umbrel/scripts/app install custom-bookorbit
 ```
 
-Give it 20–30 seconds on first start for Postgres to initialize.
+(Or via the dashboard: App Store → your custom store → Install. If Umbrel
+already has an old cached copy, use "Update" instead, or uninstall/reinstall
+if the tile is stuck.)
 
-## 4. Complete setup
+Give Postgres 20–30 seconds to finish initializing before opening the app.
 
-Open the app from your Umbrel dashboard. It'll ask for a **setup bootstrap
-token**. Umbrel generates a unique secret per app rather than letting a
-compose file hard-code one, so grab it over SSH:
+## Complete setup
+
+Open the app from the dashboard, then grab the one-time setup token over
+SSH:
 
 ```bash
-grep SETUP_BOOTSTRAP_TOKEN ~/umbrel/app-data/custom-bookorbit/docker-compose.yml
+grep -A1 SETUP_BOOTSTRAP_TOKEN ~/umbrel/app-data/custom-bookorbit/docker-compose.yml
 ```
 
-Paste that token into the setup page and create your administrator account.
-From there, follow BookOrbit's own docs to create your first library:
-https://bookorbit.app/creating-a-library
+Paste it into the setup screen and create your admin account.
 
-## Notes / things worth adjusting
+## If it still won't start
 
-- **Image tag**: this pins `ghcr.io/bookorbit/bookorbit:latest`. For a more
-  predictable install, change it to a specific release tag (check
-  https://github.com/bookorbit/bookorbit/releases) before installing —
-  updates then happen by bumping the tag and reinstalling/updating rather
-  than by whatever `latest` happens to point to.
-- **Icon/gallery**: the manifest references `1.jpg`/`2.jpg`/`3.jpg` and no
-  icon — Umbrel will just show a placeholder tile until you drop a
-  `icon.svg` (256x256) and gallery screenshots (1440x900 jpgs) into the
-  `custom-bookorbit/` folder. Purely cosmetic, safe to skip.
-- **External database**: if you'd rather point at a Postgres you already
-  run instead of the bundled container, drop the `postgres:` service and
-  set `DATABASE_URL` on `web` instead — see the "External Database" section
-  of BookOrbit's install docs.
-- **Books folder**: books live at `~/umbrel/app-data/custom-bookorbit/data/books`
-  on the Umbrel itself. If your books already live elsewhere on the box
-  (e.g. a network share mounted into Umbrel), point the `volumes:` entry
-  for `/books` at that path instead of the default.
+Check the container logs — this will usually say exactly what's wrong
+(bad env var, permission error, Postgres not ready yet):
+
+```bash
+sudo ~/umbrel/scripts/app compose custom-bookorbit logs app
+sudo ~/umbrel/scripts/app compose custom-bookorbit logs postgres
+```
+
+Common culprits at this stage: the two containers not both running (check
+`sudo ~/umbrel/scripts/app compose custom-bookorbit ps`), or leftover data
+from a previous attempt with different Postgres credentials than the ones
+Umbrel is now generating — the "before you reinstall" step above clears
+that.
+
+## Notes
+
+- **Image tag**: pins `ghcr.io/bookorbit/bookorbit:latest`. BookOrbit's own
+  `.env.example` recommends pinning a specific `sha-*` tag or digest for
+  reproducible deploys — check
+  https://github.com/bookorbit/bookorbit/pkgs/container/bookorbit for
+  available tags if you want that.
+- **External database**: BookOrbit supports pointing at a Postgres you
+  already run via `DATABASE_URL` instead of the bundled container (needs
+  the `uuid-ossp`, `pg_trgm`, and `vector` extensions). Drop the `postgres:`
+  service and add `DATABASE_URL` to the `app` service's environment if you
+  want that instead.
+- **Books folder**: books live at
+  `~/umbrel/app-data/custom-bookorbit/data/books`. Point that volume line at
+  a different host path if your library already lives elsewhere (e.g. a
+  network share mounted into Umbrel).
+- **Icon/gallery**: still just cosmetic placeholders — see the previous
+  README section on this if you want to add them.
