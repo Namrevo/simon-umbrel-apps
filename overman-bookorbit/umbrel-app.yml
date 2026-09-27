@@ -2,7 +2,7 @@ manifestVersion: 1
 id: overman-bookorbit
 category: files
 name: BookOrbit
-version: "2.6.0"
+version: "3.1.0"
 tagline: Self-hosted library for ebooks, audiobooks, comics and PDFs
 description: >-
   BookOrbit is a self-hosted digital library and reading platform for EPUB,
