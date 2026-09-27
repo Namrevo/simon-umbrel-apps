@@ -5,7 +5,7 @@ services:
     environment:
       APP_HOST: bookorbit-app
       APP_PORT: 3000
-
+      PROXY_AUTH_ADD: 'false'
   app:
     container_name: bookorbit-app
     image: ghcr.io/bookorbit/bookorbit:3.1.0
